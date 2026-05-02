@@ -106,8 +106,7 @@ cfg["secrets"]["providers"]["openrouter"] = {
     "allowlist": ["OPENROUTER_API_KEY"],
 }
 
-cfg.setdefault("meta", {})
-cfg["meta"]["lastTouchedBy"] = "railway-entrypoint"
+# Leave meta alone — the OpenClaw config validator is strict about unknown keys.
 
 cfg_path.write_text(json.dumps(cfg, indent=2))
 print(f"[openclaw-entrypoint] wrote {cfg_path}")

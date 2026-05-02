@@ -74,4 +74,8 @@ hermes profile list 2>&1 || true
 # which the API server binds. The messaging gateway will try to start
 # messaging adapters — none are configured here, so it logs a notice and
 # continues serving the API.
-exec hermes gateway run --accept-hooks
+export PYTHONUNBUFFERED=1
+# Allow any caller for the API server — Railway edge is the auth boundary
+# and we also gate via bearer token.
+export GATEWAY_ALLOW_ALL_USERS=true
+exec hermes gateway run -vv --accept-hooks
