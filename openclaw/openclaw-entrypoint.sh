@@ -96,6 +96,9 @@ cfg["gateway"] = {
 
 cfg.setdefault("plugins", {}).setdefault("entries", {})
 cfg["plugins"]["entries"].setdefault("openrouter", {"enabled": True})
+# Bonjour (mDNS) crashes in Railway's network namespace (CIAO PROBING
+# CANCELLED). There's no LAN to advertise on anyway, so turn it off.
+cfg["plugins"]["entries"]["bonjour"] = {"enabled": False}
 
 cfg.setdefault("env", {})
 cfg["env"]["OPENROUTER_API_KEY"] = or_key
