@@ -52,6 +52,6 @@ EXPOSE 8080
 # It DOES require the bearer token. So we probe via /v1/models with the key.
 # For simplicity we hit the TCP port with curl and accept any HTTP response.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -fsS -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/v1/models" | grep -E "^(200|401)$" || exit 1
+    CMD curl -fsS "http://127.0.0.1:${PORT}/health" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/hermes-entrypoint.sh"]
