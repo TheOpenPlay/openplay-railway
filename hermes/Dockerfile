@@ -30,7 +30,8 @@ RUN apt-get update && \
 # v0.11.0 tag. pip install direct from GitHub. The [all] extra pulls in every
 # optional dep (messaging adapters, provider SDKs, MCP, etc.); we could slim
 # this later if size matters.
-ARG HERMES_VERSION=v0.11.0
+# NousResearch uses calendar tags; v0.11.0 == v2026.4.23 per release notes.
+ARG HERMES_VERSION=v2026.4.23
 RUN pip install --no-cache-dir "hermes-agent[all] @ git+https://github.com/NousResearch/hermes-agent.git@${HERMES_VERSION}"
 
 # Sanity check — fail fast if the install is broken.
