@@ -106,7 +106,14 @@ cfg["secrets"]["providers"]["openrouter"] = {
     "allowlist": ["OPENROUTER_API_KEY"],
 }
 
-# Leave meta alone — the OpenClaw config validator is strict about unknown keys.
+# OpenClaw config validator is strict about unknown keys. Drop anything we
+# know it doesn't recognise so stale volumes survive schema churn.
+for bad_meta in ("lastTouchedBy",):
+    if isinstance(cfg.get("meta"), dict) and bad_meta in cfg["meta"]:
+        del cfg["meta"][bad_meta]
+# Remove legacy top-level `providers` key (pre-refactor schema) if present.
+if "providers" in cfg:
+    del cfg["providers"]
 
 cfg_path.write_text(json.dumps(cfg, indent=2))
 print(f"[openclaw-entrypoint] wrote {cfg_path}")
