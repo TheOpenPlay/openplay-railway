@@ -51,53 +51,68 @@ EOF
 fi
 
 # ---------- Config file ----------
-# Minimal headless config: token auth, LAN bind (Railway exposes via proxy),
-# OpenRouter as the default provider, default model Claude Opus 4.7.
-if [ ! -f "${OPENCLAW_CONFIG_FILE}" ]; then
-  cat > "${OPENCLAW_CONFIG_FILE}" <<EOF
-{
-  "gateway": {
-    "mode": "remote",
-    "bind": "lan",
-    "auth": "token",
-    "port": ${PORT}
-  },
-  "providers": {
-    "openrouter": {
-      "apiKey": "${OPENROUTER_API_KEY}"
-    }
-  },
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "openrouter/anthropic/claude-opus-4.7"
-      }
-    }
-  }
-}
-EOF
-fi
-
-# Refresh the token + API key on every boot so env rotations take effect.
-# We use python3 (always available) to patch JSON in place.
-python3 - <<PY
+# Use Python (always present) to (re)write a valid config on every boot.
+# Schema matches Brian's local ~/.openclaw/openclaw.json (2026.4.24):
+#   - gateway.auth is an object {mode, token}
+#   - gateway.mode is "local" (remote access comes from bind=lan + token)
+#   - env.OPENROUTER_API_KEY is how provider keys are surfaced
+#   - secrets.providers.openrouter wires the env allowlist
+#   - auth.profiles declares the openrouter profile OpenClaw expects
+python3 - <<'PY'
 import json, os, pathlib
-p = pathlib.Path(os.environ["HOME"]) / ".openclaw" / "openclaw.json"
-cfg = json.loads(p.read_text())
-cfg.setdefault("gateway", {})
-cfg["gateway"]["mode"] = "remote"
-cfg["gateway"]["bind"] = "lan"
-cfg["gateway"]["auth"] = "token"
-cfg["gateway"]["port"] = int(os.environ.get("PORT", "8080"))
-cfg.setdefault("providers", {}).setdefault("openrouter", {})
-cfg["providers"]["openrouter"]["apiKey"] = os.environ["OPENROUTER_API_KEY"]
+
+cfg_path = pathlib.Path(os.environ["HOME"]) / ".openclaw" / "openclaw.json"
+port = int(os.environ.get("PORT", "8080"))
+token = os.environ["OPENCLAW_GATEWAY_TOKEN"]
+or_key = os.environ["OPENROUTER_API_KEY"]
+
+cfg = {}
+if cfg_path.exists():
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except Exception:
+        cfg = {}
+
+cfg.setdefault("auth", {}).setdefault("profiles", {})
+cfg["auth"]["profiles"]["openrouter:default"] = {
+    "provider": "openrouter",
+    "mode": "api_key",
+}
+
 cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
-cfg["agents"]["defaults"]["model"].setdefault("primary", "openrouter/anthropic/claude-opus-4.7")
-p.write_text(json.dumps(cfg, indent=2))
+cfg["agents"]["defaults"]["model"].setdefault(
+    "primary", "openrouter/anthropic/claude-opus-4.7"
+)
+cfg["agents"]["defaults"].setdefault("workspace", os.environ["HOME"])
+
+cfg["gateway"] = {
+    "port": port,
+    "mode": "local",
+    "bind": "lan",
+    "auth": {"mode": "token", "token": token},
+    "tailscale": {"mode": "off", "resetOnExit": False},
+    "trustedProxies": [],
+}
+
+cfg.setdefault("plugins", {}).setdefault("entries", {})
+cfg["plugins"]["entries"].setdefault("openrouter", {"enabled": True})
+
+cfg.setdefault("env", {})
+cfg["env"]["OPENROUTER_API_KEY"] = or_key
+
+cfg.setdefault("secrets", {}).setdefault("providers", {})
+cfg["secrets"]["providers"]["openrouter"] = {
+    "source": "env",
+    "allowlist": ["OPENROUTER_API_KEY"],
+}
+
+cfg.setdefault("meta", {})
+cfg["meta"]["lastTouchedBy"] = "railway-entrypoint"
+
+cfg_path.write_text(json.dumps(cfg, indent=2))
+print(f"[openclaw-entrypoint] wrote {cfg_path}")
 PY
 
-# Write the gateway token to the file OpenClaw expects for --token auth.
-# openclaw gateway accepts --token <token>; we pass via env + CLI arg.
 export OPENCLAW_GATEWAY_PORT="${PORT}"
 
 echo "[openclaw-entrypoint] HOME=${HOME}"
