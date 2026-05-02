@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Entrypoint for Hermes Agent container on Railway.
 # - Seeds config.yaml with OpenRouter as the default provider
+# - Clones + periodically pulls the openplay-skills repo into /workspace/skills
 # - Creates three profiles on first boot (idempotent)
 # - Launches the messaging gateway (which ALSO runs the API server when env is set)
 set -euo pipefail
@@ -17,6 +18,83 @@ export API_SERVER_ENABLED=true
 export API_SERVER_HOST=0.0.0.0
 export API_SERVER_PORT="${PORT}"
 export API_SERVER_KEY="${HERMES_GATEWAY_TOKEN}"
+
+# ---------- Skills repo sync ----------
+# Clone openplay-skills into /workspace/skills on boot; background-pull every 5 min.
+# OPENPLAY_SKILLS_REPO defaults to the public path; OPENPLAY_SKILLS_TOKEN optional for private.
+SKILLS_DIR="${HERMES_HOME}/skills"
+SKILLS_REPO="${OPENPLAY_SKILLS_REPO:-https://github.com/TheOpenPlay/openplay-skills.git}"
+SKILLS_BRANCH="${OPENPLAY_SKILLS_BRANCH:-main}"
+SKILLS_PULL_INTERVAL="${OPENPLAY_SKILLS_PULL_INTERVAL:-300}"  # seconds
+
+sync_skills() {
+  # Inject token into URL if OPENPLAY_SKILLS_TOKEN is set and repo is https://github.com/…
+  local url="${SKILLS_REPO}"
+  if [[ -n "${OPENPLAY_SKILLS_TOKEN:-}" && "${url}" == https://github.com/* ]]; then
+    url="https://x-access-token:${OPENPLAY_SKILLS_TOKEN}@${url#https://}"
+  fi
+
+  if [ -d "${SKILLS_DIR}/.git" ]; then
+    git -C "${SKILLS_DIR}" remote set-url origin "${url}" 2>/dev/null || true
+    git -C "${SKILLS_DIR}" fetch --quiet origin "${SKILLS_BRANCH}" 2>/dev/null || {
+      echo "[hermes-entrypoint] skills: fetch failed, continuing with cached copy"
+      return 0
+    }
+    git -C "${SKILLS_DIR}" reset --hard "origin/${SKILLS_BRANCH}" --quiet 2>/dev/null || true
+    echo "[hermes-entrypoint] skills: pulled latest ($(git -C "${SKILLS_DIR}" rev-parse --short HEAD 2>/dev/null))"
+  else
+    echo "[hermes-entrypoint] skills: cloning ${SKILLS_REPO} → ${SKILLS_DIR}"
+    if ! git clone --depth 1 --branch "${SKILLS_BRANCH}" "${url}" "${SKILLS_DIR}" 2>&1; then
+      echo "[hermes-entrypoint] skills: clone failed — hermes will boot without skills"
+      mkdir -p "${SKILLS_DIR}"
+    fi
+  fi
+}
+
+sync_skills
+
+# Background loop — pulls every SKILLS_PULL_INTERVAL seconds.
+(
+  while true; do
+    sleep "${SKILLS_PULL_INTERVAL}"
+    sync_skills || true
+  done
+) &
+
+# Skills webhook listener — tiny HTTP server on port 8090 that triggers an
+# immediate sync when GitHub pushes a webhook. Optional; no-op if python3
+# missing (it is present in the image). The webhook path is /_skills_sync
+# and accepts any POST.
+(
+  python3 - <<'PYEOF' &
+import http.server, socketserver, subprocess, os, signal, sys
+PORT = int(os.environ.get("SKILLS_WEBHOOK_PORT", "8090"))
+SKILLS_DIR = os.environ.get("HERMES_HOME", "/workspace") + "/skills"
+BRANCH = os.environ.get("OPENPLAY_SKILLS_BRANCH", "main")
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        try:
+            # Drain body
+            ln = int(self.headers.get("Content-Length", "0") or 0)
+            if ln: self.rfile.read(ln)
+        except Exception: pass
+        try:
+            subprocess.run(["git", "-C", SKILLS_DIR, "fetch", "--quiet", "origin", BRANCH], check=False, timeout=30)
+            subprocess.run(["git", "-C", SKILLS_DIR, "reset", "--hard", f"origin/{BRANCH}", "--quiet"], check=False, timeout=30)
+            sha = subprocess.run(["git", "-C", SKILLS_DIR, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=10).stdout.strip()
+            print(f"[skills-webhook] pulled {sha}", flush=True)
+        except Exception as e:
+            print(f"[skills-webhook] pull failed: {e}", flush=True)
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a, **k): pass
+try:
+    with socketserver.TCPServer(("127.0.0.1", PORT), H) as s:
+        print(f"[skills-webhook] listening on 127.0.0.1:{PORT}", flush=True)
+        s.serve_forever()
+except Exception as e:
+    print(f"[skills-webhook] disabled: {e}", flush=True)
+PYEOF
+) &
 
 # ---------- Base config.yaml ----------
 CFG="${HERMES_HOME}/config.yaml"
@@ -66,6 +144,7 @@ create_profile "social-design-agent"
 
 echo "[hermes-entrypoint] HERMES_HOME=${HERMES_HOME}"
 echo "[hermes-entrypoint] api_server=0.0.0.0:${PORT} (auth: bearer)"
+echo "[hermes-entrypoint] skills_dir=${SKILLS_DIR} (pull every ${SKILLS_PULL_INTERVAL}s)"
 hermes profile list 2>&1 || true
 
 # ---------- Launch ----------
