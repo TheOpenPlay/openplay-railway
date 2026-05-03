@@ -138,9 +138,15 @@ create_profile() {
   fi
 }
 
-create_profile "email-agent"
+# As of 2026-05-03 the roster is 6 deliverable-specialists.
+# (Legacy social-design-agent is retired; split into social-image-agent + social-video-agent.
+# outreach-agent carved out of email-agent's old scope.)
 create_profile "tournament-plan-agent"
-create_profile "social-design-agent"
+create_profile "email-agent"
+create_profile "outreach-agent"
+create_profile "hero-art-agent"
+create_profile "social-image-agent"
+create_profile "social-video-agent"
 
 echo "[hermes-entrypoint] HERMES_HOME=${HERMES_HOME}"
 echo "[hermes-entrypoint] api_server=0.0.0.0:${PORT} (auth: bearer)"
