@@ -32,6 +32,11 @@ ENV HOME=/workspace
 ENV OPENCLAW_HOME=/workspace
 WORKDIR /workspace
 
+# ---------- baked-in skills ----------
+# Skills shipped inside the image; entrypoint copies them into the workspace
+# volume on every boot so the orchestrator picks them up.
+COPY skills /opt/openclaw-skills
+
 # ---------- entrypoint ----------
 COPY openclaw-entrypoint.sh /usr/local/bin/openclaw-entrypoint.sh
 RUN chmod +x /usr/local/bin/openclaw-entrypoint.sh

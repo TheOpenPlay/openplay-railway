@@ -7,6 +7,9 @@ set -euo pipefail
 
 : "${OPENROUTER_API_KEY:?OPENROUTER_API_KEY is required}"
 : "${OPENCLAW_GATEWAY_TOKEN:?OPENCLAW_GATEWAY_TOKEN is required}"
+: "${HERMES_URL:=https://hermes-production-a3a7.up.railway.app}"
+: "${HERMES_GATEWAY_TOKEN:?HERMES_GATEWAY_TOKEN is required}"
+export HERMES_URL HERMES_GATEWAY_TOKEN
 
 PORT="${PORT:-8080}"
 OPENCLAW_CONFIG_DIR="${HOME}/.openclaw"
@@ -16,30 +19,40 @@ WORKSPACE_DIR="${HOME}"
 mkdir -p "${OPENCLAW_CONFIG_DIR}"
 mkdir -p "${WORKSPACE_DIR}/memory"
 
-# ---------- Seed a minimal workspace if empty ----------
-if [ ! -f "${WORKSPACE_DIR}/AGENTS.md" ]; then
-  cat > "${WORKSPACE_DIR}/AGENTS.md" <<'EOF'
+# ---------- Always rewrite AGENTS.md (it lists the live profile roster) ----------
+cat > "${WORKSPACE_DIR}/AGENTS.md" <<'EOF'
 # AGENTS.md — The Open Play (Railway)
 
 This is the orchestrator OpenClaw workspace for The Open Play.
 
 ## Role
 - Tier-1 orchestrator. Ingests campaign intake, decomposes work,
-  delegates specialist work to Hermes profiles, QAs, packages.
+  delegates specialist work to Hermes profiles in parallel, QAs, packages.
 - Read-only by default: skills live in the GitHub skills repo (Phase 2).
 - Writes go through git commits, not loose files.
 
-## Hermes profiles (Tier 2)
-- `email-agent`        — tournament email lifecycle
-- `tournament-plan-agent` — full marketing plan
-- `social-design-agent`   — IG/X + designer briefs
+## Hermes profiles (Tier 2 — 6 total)
+- `tournament-plan-agent` — marketing overview, logistics, schedule, DUPR divisions, day-of guide
+- `email-agent`           — PickleballTournaments 8-week email sequence
+- `outreach-agent`        — DMs, text blasts, FB groups, partner/facility/host outreach
+- `hero-art-agent`        — flyer series + email hero art briefs (designer-ready)
+- `social-image-agent`    — IG feed/stories/FB posts (copy + image briefs)
+- `social-video-agent`    — editor briefs for promo/highlight/testimonial videos
+
+## How to invoke them
+See `~/.openclaw/skills/hermes-orchestration/SKILL.md` for the full recipe
+(single profile, sequential, or parallel for full campaign builds).
+
+Hermes endpoint: `$HERMES_URL/v1/chat/completions` (OpenAI-compatible).
+Auth: `Authorization: Bearer $HERMES_GATEWAY_TOKEN`.
+Profile name goes in the `model` field.
 
 ## Persistence
 - /workspace is a Railway volume. Treat contents as durable.
 - Memory: ~/memory/YYYY-MM-DD.md (create as needed).
+- Campaign outputs: ~/campaigns/<id>/<profile>.md
 
 EOF
-fi
 
 if [ ! -f "${WORKSPACE_DIR}/SOUL.md" ]; then
   cat > "${WORKSPACE_DIR}/SOUL.md" <<'EOF'
@@ -47,7 +60,24 @@ if [ ! -f "${WORKSPACE_DIR}/SOUL.md" ]; then
 You are the orchestrator for The Open Play. Terse, competent,
 no filler. Delegate specialist work to Hermes profiles via the
 openplay-skills repo conventions.
+
+When the user asks for a campaign, fire the Hermes profiles in parallel
+per the hermes-orchestration skill. Don't try to be a Hermes profile
+yourself — invoke the profile.
 EOF
+fi
+
+# ---------- Install baked-in skills into the workspace ----------
+# Skills are shipped inside the image at /opt/openclaw-skills and copied
+# into the OpenClaw skills directory on every boot. Workspace-local edits
+# to a baked skill are preserved (we only refresh files that have changed).
+SKILLS_SRC="/opt/openclaw-skills"
+SKILLS_DST="${OPENCLAW_CONFIG_DIR}/skills"
+if [ -d "${SKILLS_SRC}" ]; then
+  mkdir -p "${SKILLS_DST}"
+  # cp -RTu: recursive, no nested target dir, only-newer (preserves user edits)
+  cp -RTu "${SKILLS_SRC}/." "${SKILLS_DST}/" 2>/dev/null || cp -R "${SKILLS_SRC}/." "${SKILLS_DST}/"
+  echo "[openclaw-entrypoint] installed baked skills from ${SKILLS_SRC} → ${SKILLS_DST}"
 fi
 
 # ---------- Config file ----------
